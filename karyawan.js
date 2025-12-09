@@ -30,27 +30,60 @@ function showLoading(show) {
 
 async function loadAllData() {
   try {
-    if (!isOnline()) {
-      alert("❌ Tidak ada koneksi internet. Aplikasi memerlukan koneksi untuk bekerja.");
-      return false;
-    }
-
     showLoading(true);
 
-    const [barang, transaksi, deposit] = await Promise.all([
-      loadBarangData(),
-      loadTransaksiData(),
-      loadDepositData(),
-    ]);
+    if (isOnline()) {
+      // Online mode - load dari server
+      try {
+        const [barang, transaksi, deposit] = await Promise.all([
+          loadBarangData(),
+          loadTransaksiData(),
+          loadDepositData(),
+        ]);
 
-    barangData = barang;
-    transaksiData = Array.isArray(transaksi) ? transaksi : transaksi.transactions || [];
-    depositData = deposit;
+        barangData = barang;
+        transaksiData = Array.isArray(transaksi) ? transaksi : transaksi.transactions || [];
+        depositData = deposit;
 
-    isDataLoaded = true;
-    return true;
+        isDataLoaded = true;
+        return true;
+      } catch (error) {
+        console.warn("Gagal load dari server, fallback ke cache:", error);
+        
+        // Fallback ke cache
+        barangData = loadBarangCache();
+        transaksiData = loadTransaksiCache();
+        depositData = loadDepositCache();
+        
+        isDataLoaded = true;
+        
+        alert(
+          "⚠️ Mode Offline\n\n" +
+          "Koneksi ke server gagal. Menggunakan data dari cache.\n" +
+          "Data akan tersinkronisasi otomatis saat koneksi stabil."
+        );
+        
+        return true;
+      }
+    } else {
+      // Offline mode - load dari cache
+      barangData = loadBarangCache();
+      transaksiData = loadTransaksiCache();
+      depositData = loadDepositCache();
+      
+      isDataLoaded = true;
+      
+      alert(
+        "📱 Mode Offline\n\n" +
+        "Anda sedang offline. Menggunakan data dari cache.\n" +
+        "Transaksi akan tersinkronisasi otomatis saat online."
+      );
+      
+      return true;
+    }
   } catch (error) {
-    alert("❌ Gagal memuat data dari server. Silakan cek koneksi internet dan refresh halaman.");
+    console.error("Error di loadAllData:", error);
+    alert("❌ Gagal memuat data. Silakan refresh halaman.");
     return false;
   } finally {
     showLoading(false);
@@ -59,10 +92,19 @@ async function loadAllData() {
 
 async function refreshData() {
   if (!isOnline()) {
-    alert("⚠️ Mode Offline. Data mungkin tidak terbaru.");
-    return false;
+    // Offline - gunakan cache saja
+    barangData = loadBarangCache();
+    transaksiData = loadTransaksiCache();
+    depositData = loadDepositCache();
+    return true;
   }
-  return await loadAllData();
+  
+  try {
+    return await loadAllData();
+  } catch (error) {
+    console.warn("Gagal refresh dari server, gunakan cache:", error);
+    return true; // Return true karena masih bisa pakai cache
+  }
 }
 
 function loadPageData(page) {
@@ -1279,6 +1321,28 @@ function getBarangToSave(affectedItemIds, promotionResults) {
   return { toSave, toDelete };
 }
 
+// 1. PERBAIKAN: Tambahkan retry mechanism untuk operasi online
+async function saveWithRetry(saveFunction, maxRetries = 3) {
+  let lastError;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await saveFunction();
+      return result;
+    } catch (error) {
+      lastError = error;
+      console.warn(`Attempt ${attempt} failed:`, error.message);
+      
+      if (attempt < maxRetries) {
+        // Exponential backoff: 1s, 2s, 3s
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+      }
+    }
+  }
+  
+  throw lastError;
+}
+// 2. PERBAIKAN: Error handling yang lebih baik di checkout
 async function initCheckout() {
   const btnCheckout = document.getElementById("btnCheckout");
   if (!btnCheckout) return;
@@ -1289,11 +1353,20 @@ async function initCheckout() {
       return;
     }
 
-    if (!isOnline()) {
-      alert("❌ Tidak ada koneksi internet. Checkout memerlukan koneksi online.");
-      return;
+    const isCurrentlyOnline = isOnline();
+    
+    if (!isCurrentlyOnline) {
+      const confirmOffline = confirm(
+        "⚠️ MODE OFFLINE\n\n" +
+        "Anda sedang offline. Transaksi akan disimpan di perangkat " +
+        "dan otomatis tersinkronisasi saat koneksi kembali.\n\n" +
+        "Lanjutkan transaksi?"
+      );
+      
+      if (!confirmOffline) return;
     }
 
+    // Calculate totals
     let calculatedTotal = 0;
     cartItems.forEach((item) => {
       const fifoResult = calculateFIFOPricing(item.id, item.qty, item.stokSource);
@@ -1304,8 +1377,12 @@ async function initCheckout() {
 
     const finalTotal = manualGrandTotal !== null ? manualGrandTotal : calculatedTotal;
     const payment = parseFloat(document.getElementById("paymentAmount")?.value) || 0;
+    const change = Math.max(0, payment - finalTotal);
 
-    // ✅ PERBAIKAN 1 & 2: Validasi pembayaran dengan notifikasi yang jelas
+    // ============================================
+    // VALIDASI PEMBAYARAN
+    // ============================================
+    
     if (useDepositForTransaction && selectedDepositCustomer) {
       const customerBalance = selectedDepositCustomer.saldo;
 
@@ -1313,15 +1390,9 @@ async function initCheckout() {
         const shortfall = finalTotal - customerBalance;
         const confirmed = confirm(
           "⚠️ Saldo deposit tidak mencukupi!\n\n" +
-            "Total Belanja: " +
-            formatRupiah(finalTotal) +
-            "\n" +
-            "Saldo Deposit: " +
-            formatRupiah(customerBalance) +
-            "\n" +
-            "Kekurangan: " +
-            formatRupiah(shortfall) +
-            "\n\n" +
+            "Total Belanja: " + formatRupiah(finalTotal) + "\n" +
+            "Saldo Deposit: " + formatRupiah(customerBalance) + "\n" +
+            "Kekurangan: " + formatRupiah(shortfall) + "\n\n" +
             "Pelanggan harus membayar kekurangan secara tunai.\n" +
             "Lanjutkan?"
         );
@@ -1334,45 +1405,35 @@ async function initCheckout() {
         }
       }
     } else if (payment < finalTotal) {
-      // ✅ PERBAIKAN 1: Izinkan pembayaran 0 dengan konfirmasi
       const kekurangan = finalTotal - payment;
 
       const confirmed = confirm(
         "⚠️ Pembayaran kurang dari total!\n\n" +
-          "Total Belanja: " +
-          formatRupiah(finalTotal) +
-          "\n" +
-          "Dibayar: " +
-          formatRupiah(payment) +
-          "\n" +
-          "Kekurangan: " +
-          formatRupiah(kekurangan) +
-          "\n\n" +
+          "Total Belanja: " + formatRupiah(finalTotal) + "\n" +
+          "Dibayar: " + formatRupiah(payment) + "\n" +
+          "Kekurangan: " + formatRupiah(kekurangan) + "\n\n" +
           "Transaksi akan dicatat sebagai 'Belum Lunas'.\n" +
           "Lanjutkan?"
       );
 
       if (!confirmed) return;
     } else if (payment >= finalTotal) {
-      // ✅ PERBAIKAN 2: Tambahkan notifikasi untuk pembayaran lunas
       const kembalian = payment - finalTotal;
       const confirmed = confirm(
         "✅ Konfirmasi Pembayaran Lunas\n\n" +
-          "Total Belanja: " +
-          formatRupiah(finalTotal) +
-          "\n" +
-          "Dibayar: " +
-          formatRupiah(payment) +
-          "\n" +
-          "Kembalian: " +
-          formatRupiah(kembalian) +
-          "\n\n" +
+          "Total Belanja: " + formatRupiah(finalTotal) + "\n" +
+          "Dibayar: " + formatRupiah(payment) + "\n" +
+          "Kembalian: " + formatRupiah(kembalian) + "\n\n" +
           "Lanjutkan transaksi?"
       );
 
       if (!confirmed) return;
     }
 
+    // ============================================
+    // PERSIAPAN DATA TRANSAKSI
+    // ============================================
+    
     let barangListForKeuangan = "";
     let totalBanyaknya = 0;
 
@@ -1401,10 +1462,7 @@ async function initCheckout() {
     const customerName = document.getElementById("customerName")?.value || "Customer";
     let transactionNote = document.getElementById("transactionNote")?.value || "-";
 
-    const totalDiskon = cartItems.reduce((sum, item) => {
-      return sum + (item.diskonRupiah || 0);
-    }, 0);
-
+    const totalDiskon = cartItems.reduce((sum, item) => sum + (item.diskonRupiah || 0), 0);
     const sisaTagihan = Math.max(0, finalTotal - payment);
     let statusTransaksi = "Lunas";
 
@@ -1449,7 +1507,6 @@ async function initCheckout() {
     cartItems.forEach(function (item) {
       const fifoResult = calculateFIFOPricing(item.id, item.qty, item.stokSource);
       const usesFIFO = fifoResult.success && fifoResult.breakdown.length > 1;
-
       const diskonPersen = item.diskonPersen || 0;
       const diskonRupiah = item.diskonRupiah || 0;
 
@@ -1458,7 +1515,6 @@ async function initCheckout() {
           const batchSubtotal = batch.subtotal;
           const totalSebelumDiskon = fifoResult.totalCost;
           const batchDiskonRupiah = totalSebelumDiskon > 0 ? (batchSubtotal / totalSebelumDiskon) * diskonRupiah : 0;
-          const batchDiskonPersen = diskonPersen;
 
           const detailItem = {
             idTrans: transaction.id,
@@ -1467,7 +1523,7 @@ async function initCheckout() {
             nama: item.nama,
             harga: batch.harga,
             qty: batch.qty,
-            diskonPersen: batchDiskonPersen,
+            diskonPersen: diskonPersen,
             diskonRupiah: batchDiskonRupiah,
             isKotak: item.typeBarang === "kelompok",
             typeBarang: item.typeBarang || "turunan",
@@ -1505,19 +1561,28 @@ async function initCheckout() {
       }
     });
 
+    console.log("\n🛒 ====== STARTING CHECKOUT ======");
+    console.log("💰 Total:", finalTotal);
+    console.log("💵 Payment:", payment);
+    console.log("🔄 Online:", isCurrentlyOnline);
+
+    // ============================================
+    // UPDATE STOCK DI MEMORY
+    // ============================================
+    
     const affectedItemIds = new Set();
     cartItems.forEach((item) => affectedItemIds.add(item.id));
 
+    console.log("📦 Updating stock for", affectedItemIds.size, "items...");
     updateStockAfterSale(cartItems);
+    console.log("✅ Stock updated in memory (barangData)");
 
+    // Check promotion
     const promotionResults = [];
-
     for (const itemId of affectedItemIds) {
       const needsPromotion = await checkIfNeedsPromotion(itemId);
-
       if (needsPromotion) {
         const promotionInfo = performBatchPromotion(itemId);
-
         if (promotionInfo && promotionInfo.success) {
           promotionResults.push({
             itemId,
@@ -1533,32 +1598,66 @@ async function initCheckout() {
 
     const finalBarangResult = getBarangToSave(affectedItemIds, promotionResults);
 
-try {
-  showLoading(true);
+    console.log("📊 Items to save:", finalBarangResult.toSave.length);
+    console.log("🗑️ Items to delete:", finalBarangResult.toDelete.length);
 
-  await saveTransaksiData(transaction, detailTransactionData);
+    try {
+      showLoading(true);
 
-  // ✅ Simpan barang yang diupdate
-  const saveResult = await saveBarangData(finalBarangResult.toSave);
+      // ============================================
+      // ✅ STEP 1: SAVE BARANG (STOCK) - PRIORITY #1
+      // ============================================
+      console.log("\n📦 STEP 1: Saving barang (stock)...");
+      
+      let barangSaveSuccess = false;
+      const barangResult = await saveBarangData(finalBarangResult.toSave);
+      barangSaveSuccess = barangResult.success || barangResult.offline;
+      console.log("📦 Barang save result:", barangResult);
 
-  // ✅ HAPUS batch yang sudah promoted dari Google Sheets
-  if (finalBarangResult.toDelete && finalBarangResult.toDelete.length > 0) {
-    for (const batchInfo of finalBarangResult.toDelete) {
-      try {
-        // ✅ Gunakan fungsi deleteEmptyBatch dengan info lengkap
-        await deleteEmptyBatch(
-          batchInfo.id, 
-          batchInfo.tanggal, 
-          "Penambahan Stok Lama"
-        );
-        console.log(`✅ Batch ${batchInfo.id} dari ${batchInfo.tanggal} berhasil dihapus`);
-      } catch (error) {
-        console.warn(`⚠️ Gagal menghapus batch ID ${batchInfo.id}:`, error);
+      if (!barangSaveSuccess) {
+        throw new Error("Gagal menyimpan data stok barang");
       }
-    }
-  }
-  
+
+      // ============================================
+      // ✅ STEP 2: SAVE TRANSAKSI
+      // ============================================
+      console.log("\n💰 STEP 2: Saving transaksi...");
+      
+      let transaksiSaveSuccess = false;
+      const transaksiResult = await saveTransaksiData(transaction, detailTransactionData);
+      transaksiSaveSuccess = transaksiResult.success || transaksiResult.offline;
+      console.log("💰 Transaksi save result:", transaksiResult);
+
+      if (!transaksiSaveSuccess) {
+        throw new Error("Gagal menyimpan data transaksi");
+      }
+
+      // ============================================
+      // STEP 3: DELETE EMPTY BATCHES
+      // ============================================
+      if (finalBarangResult.toDelete && finalBarangResult.toDelete.length > 0) {
+        console.log("\n🗑️ STEP 3: Deleting", finalBarangResult.toDelete.length, "empty batches...");
+        
+        for (const batchInfo of finalBarangResult.toDelete) {
+          try {
+            await deleteEmptyBatch(
+              batchInfo.id, 
+              batchInfo.tanggal, 
+              "Penambahan Stok Lama"
+            );
+            console.log(`   ✅ Deleted batch ${batchInfo.id}`);
+          } catch (error) {
+            console.warn(`   ⚠️ Failed to delete batch ${batchInfo.id}:`, error.message);
+          }
+        }
+      }
+
+      // ============================================
+      // STEP 4: SAVE DEPOSIT (if applicable)
+      // ============================================
       if (useDepositForTransaction && selectedDepositCustomer) {
+        console.log("\n💳 STEP 4: Saving deposit...");
+        
         const depositUsed = Math.min(finalTotal, selectedDepositCustomer.saldo);
         const newBalance = selectedDepositCustomer.saldo - depositUsed;
 
@@ -1573,33 +1672,68 @@ try {
           toko: STORE_ID,
         };
 
-        await saveDeposit([depositTransaction]);
+        try {
+          await saveDeposit([depositTransaction]);
+          console.log("   ✅ Deposit saved");
+        } catch (error) {
+          console.warn("   ⚠️ Deposit save failed:", error.message);
+        }
       }
 
-      const [barang, transaksi, deposit] = await Promise.all([loadBarangData(), loadTransaksiData(), loadDepositData()]);
+      // ============================================
+      // STEP 5: RELOAD DATA
+      // ============================================
+      console.log("\n📥 STEP 5: Reloading data...");
+      
+      if (isCurrentlyOnline) {
+        try {
+          const [barang, transaksi, deposit] = await Promise.all([
+            loadBarangData(), 
+            loadTransaksiData(), 
+            loadDepositData()
+          ]);
 
-      barangData = barang;
-      transaksiData = Array.isArray(transaksi) ? transaksi : transaksi.transactions || [];
-      depositData = deposit;
+          barangData = barang;
+          transaksiData = Array.isArray(transaksi) ? transaksi : transaksi.transactions || [];
+          depositData = deposit;
+          console.log("✅ Data reloaded from server");
+        } catch (error) {
+          console.warn("⚠️ Failed to reload from server, using cache");
+          barangData = loadBarangCache();
+          transaksiData = loadTransaksiCache();
+          depositData = loadDepositCache();
+        }
+      } else {
+        barangData = loadBarangCache();
+        transaksiData = loadTransaksiCache();
+        depositData = loadDepositCache();
+        console.log("📱 Data loaded from cache (offline)");
+      }
 
-      const actualPayment = useDepositForTransaction && selectedDepositCustomer ? Math.max(0, finalTotal - selectedDepositCustomer.saldo) : payment;
+      // ============================================
+      // SUCCESS MESSAGE
+      // ============================================
+      const actualPayment = useDepositForTransaction && selectedDepositCustomer 
+        ? Math.max(0, finalTotal - selectedDepositCustomer.saldo) 
+        : payment;
 
-      const change = Math.max(0, payment - finalTotal);
-
-      let alertMessage = "✅ Transaksi berhasil!\n" + "Total: " + formatRupiah(finalTotal) + "\n";
+      let alertMessage = "✅ Transaksi berhasil!\n";
+      
+      if (!isCurrentlyOnline) {
+        alertMessage += "📱 MODE OFFLINE - Data tersimpan di perangkat\n\n";
+      }
+      
+      alertMessage += "Total: " + formatRupiah(finalTotal) + "\n";
 
       if (useDepositForTransaction && selectedDepositCustomer) {
         const depositUsed = Math.min(finalTotal, selectedDepositCustomer.saldo);
         alertMessage += "Bayar Deposit: " + formatRupiah(depositUsed) + "\n";
-
         if (actualPayment > 0) {
           alertMessage += "Bayar Tunai: " + formatRupiah(actualPayment) + "\n";
         }
-
         alertMessage += "Sisa Deposit: " + formatRupiah(selectedDepositCustomer.saldo - depositUsed) + "\n";
       } else {
         alertMessage += "Dibayar: " + formatRupiah(payment) + "\n";
-
         if (sisaTagihan > 0) {
           alertMessage += "❗ Sisa Tagihan: " + formatRupiah(sisaTagihan) + "\n";
           alertMessage += "Status: BELUM LUNAS\n";
@@ -1616,8 +1750,22 @@ try {
         alertMessage += "\n\n📦 Batch Promotion: " + promotedItems.length + " barang dipromosikan";
       }
 
+      if (!isCurrentlyOnline) {
+        alertMessage += "\n\n📤 Data akan otomatis tersinkronisasi saat online";
+        
+        const pendingBarang = getPendingBarang();
+        const pendingTrans = getPendingTransaksi();
+        alertMessage += "\n📊 Pending: " + pendingBarang.length + " barang, " + pendingTrans.length + " transaksi";
+      }
+
       alert(alertMessage);
 
+      console.log("\n✅ ====== CHECKOUT SUCCESS ======\n");
+
+      // ============================================
+      // RESET CART & UI
+      // ============================================
+      
       cartItems = [];
       manualGrandTotal = null;
       deactivateDepositMode();
@@ -1636,18 +1784,28 @@ try {
 
       renderCart();
       renderTodayTransactionsTable();
+      
     } catch (error) {
-      alert("❌ Gagal menyimpan transaksi. Silakan cek koneksi dan coba lagi.\n\nError: " + error.message);
+      console.error("\n❌ ====== CHECKOUT FAILED ======");
+      console.error("Error:", error);
+      
+      alert(
+        "❌ Gagal menyimpan transaksi.\n\n" +
+        error.message +
+        "\n\nSilakan coba lagi."
+      );
     } finally {
       showLoading(false);
     }
   });
 
+  // Payment input listener
   const paymentAmount = document.getElementById("paymentAmount");
   if (paymentAmount) {
     paymentAmount.addEventListener("input", updateCartTotal);
   }
 }
+
 
 function renderTodayTransactionsTable() {
   const tbody = document.getElementById("todayTransactionsTableBody");
@@ -1870,8 +2028,14 @@ function generateTransactionRow(t, isPrevious = false) {
     }        
 
 window.lunaskanTransaksi = async function (transactionId) {
-  if (!isOnline()) {
-    alert("❌ Tidak ada koneksi internet. Pelunasan memerlukan koneksi online.");
+  const isCurrentlyOnline = isOnline();
+  
+  if (!isCurrentlyOnline) {
+    alert(
+      "❌ Pelunasan Memerlukan Koneksi Online\n\n" +
+      "Fitur pelunasan memerlukan sinkronisasi real-time.\n" +
+      "Silakan coba lagi saat koneksi internet tersedia."
+    );
     return;
   }
 
@@ -3117,8 +3281,14 @@ async function finishRefundProcess() {
     return;
   }
 
-  if (!isOnline()) {
-    alert("❌ Tidak ada koneksi internet. Proses refund/tukar memerlukan koneksi online.");
+  const isCurrentlyOnline = isOnline();
+  
+  if (!isCurrentlyOnline) {
+    alert(
+      "❌ Refund/Tukar Memerlukan Koneksi Online\n\n" +
+      "Proses refund/tukar memerlukan sinkronisasi real-time.\n" +
+      "Silakan coba lagi saat koneksi internet tersedia."
+    );
     return;
   }
 
@@ -3448,13 +3618,112 @@ window.selectRefundByName = function () {
   selectTransactionForRefund(customerName.trim());
 };
 
+window.addEventListener("online", async () => {
+  console.log("🌐 Koneksi online terdeteksi");
+  
+  updateConnectionStatus();
+  
+  // Tunggu 2 detik untuk memastikan koneksi stabil
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  
+  // Cek apakah masih online
+  if (!isOnline()) {
+    console.log("⚠️ Koneksi tidak stabil, skip sync");
+    return;
+  }
+  
+  // Sync pending data
+  if (hasPendingChanges()) {
+    console.log("📤 Memulai sinkronisasi data pending...");
+    
+    try {
+      const syncResult = await syncPendingData();
+      
+      if (syncResult.success) {
+        console.log("✅ Sinkronisasi berhasil:", syncResult);
+        
+        // Reload data setelah sync
+        await refreshData();
+        
+        // Tampilkan notifikasi sukses
+        const totalSynced = 
+          syncResult.results.barang.success +
+          syncResult.results.transaksi.success +
+          syncResult.results.deposit.success +
+          syncResult.results.delete.success;
+        
+        if (totalSynced > 0) {
+          alert(
+            "✅ Sinkronisasi Berhasil!\n\n" +
+            `${totalSynced} data berhasil tersinkronisasi ke server.`
+          );
+        }
+      } else {
+        console.warn("⚠️ Sinkronisasi gagal:", syncResult);
+      }
+    } catch (error) {
+      console.error("❌ Error saat sync:", error);
+    }
+  }
+});
+
+function updatePendingIndicator() {
+  const statusText = document.getElementById("statusText");
+  if (!statusText) return;
+  
+  const pending = hasPendingChanges();
+  const online = isOnline();
+  
+  if (pending && online) {
+    statusText.textContent = "Online (Syncing...)";
+    statusText.style.color = "#f59e0b";
+  } else if (pending && !online) {
+    statusText.textContent = "Offline (Pending)";
+    statusText.style.color = "#ef4444";
+  } else if (online) {
+    statusText.textContent = "Online";
+    statusText.style.color = "#10b981";
+  } else {
+    statusText.textContent = "Offline";
+    statusText.style.color = "#6b7280";
+  }
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   try {
-    await loadAllData();
+    console.log("🚀 Memulai inisialisasi aplikasi...");
+    
+    // Load data dengan retry
+    let loadSuccess = false;
+    let attempts = 0;
+    const maxAttempts = 3;
+    
+    while (!loadSuccess && attempts < maxAttempts) {
+      attempts++;
+      try {
+        loadSuccess = await loadAllData();
+      } catch (error) {
+        console.warn(`Attempt ${attempts} gagal:`, error);
+        if (attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
+    }
+    
+    if (!loadSuccess) {
+      alert(
+        "⚠️ Gagal memuat data dari server.\n\n" +
+        "Aplikasi akan menggunakan data cache.\n" +
+        "Silakan refresh halaman untuk mencoba lagi."
+      );
+    }
   } catch (error) {
+    console.error("❌ Error fatal di initialization:", error);
+    alert("❌ Terjadi kesalahan. Silakan refresh halaman.");
     return;
   }
 
+  // Initialize semua komponen
   initNavigation();
   initSearch();
   initCheckout();
@@ -3464,6 +3733,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   updateDateTime();
   setInterval(updateDateTime, 1000);
+  
+  updatePendingIndicator();
 
   const activeNavItem = document.querySelector(".nav-item.active");
   const initialPage = activeNavItem ? activeNavItem.dataset.page : "transaksi";
@@ -3472,6 +3743,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     loadPageData(initialPage);
   }, 100);
 
+  // Event listener untuk reload data
   window.addEventListener("dataReloaded", async () => {
     await refreshData();
     const currentNavItem = document.querySelector(".nav-item.active");
@@ -3480,4 +3752,12 @@ document.addEventListener("DOMContentLoaded", async () => {
       renderPage(currentPage);
     }
   });
-}); 
+  
+  // Event listener untuk sync completed
+  window.addEventListener("dataSynced", (event) => {
+    console.log("✅ Data synced event received:", event.detail);
+    updatePendingIndicator();
+  });
+  
+  console.log("✅ Aplikasi berhasil diinisialisasi");
+});
