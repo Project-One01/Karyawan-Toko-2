@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sistem Pencatatan Toko UD.BM - Karyawan Toko 1</title>
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  </head>
+  <body>
+    <div class="container">
+      <aside class="sidebar">
+        <div class="logo">
+          <img src="icon (1).jpeg" alt="Logo Berkah Mandiri" class="logo-image">
+          <h2><span class="logo-berkah">BERKAH</span> <span class="logo-mandiri">MANDIRI</span></h2>
+        </div>
+        <nav class="nav-menu">
+          <a href="#" class="nav-item active" data-page="transaksi">
+            <i class="fas fa-shopping-cart"></i>
+            <span>Transaksi</span>
+          </a>
+          <a href="#" class="nav-item" data-page="listbarang">
+            <i class="fas fa-boxes"></i>
+            <span>List Barang</span>
+          </a>
+          <a href="#" class="nav-item" data-page="refund">
+            <i class="fas fa-undo"></i>
+            <span>Refund/Tukar</span>
+          </a>
+        </nav>
+      </aside>
+
+      <main class="main-content">
+        <header class="header">
+          <div class="header-left">
+            <button class="btn-menu" id="btnMenu">
+              <i class="fas fa-bars"></i>
+            </button>
+            <h1 id="pageTitle">Transaksi</h1>
+          </div>
+          <div class="header-right">
+            <span class="date-time" id="dateTime"></span>
+            <div class="user-info">
+              <i class="fas fa-user-circle"></i>
+              <span>Karyawan Toko 1 (BM1)</span>
+            </div>
+          </div>
+          <div id="connectionStatus" class="connection-status">
+            <i class="fas fa-circle"></i>
+            <span id="statusText">Checking...</span>
+          </div>
+        </header>
+
+        <section id="transaksi" class="page active">
+          <div class="transaksi-container">
+            <div class="search-section">
+              <h3>Cari Barang</h3>
+              
+              <div class="search-box">
+                <input type="text" id="searchBarang" placeholder="Cari dengan ID (01) atau Nama Barang..." />
+                <button class="btn-search" id="btnSearch">
+                  <i class="fas fa-search"></i>
+                </button>
+              </div>
+              <div id="searchResults" class="search-results"></div>
+            </div>
+
+            <div class="cart-section">
+              <div class="cart-header">
+                <h3>Keranjang Belanja</h3>
+              </div>
+              <div id="cartItems" class="cart-items"></div>
+              
+              <div class="cart-summary">
+                <div class="summary-row">
+                  <span>Total:</span>
+                  <span id="cartTotal" class="total-price">Rp 0</span>
+                </div>
+                
+                <!-- TAMBAHAN: Deposit Section -->
+                <div class="deposit-section">
+                  <div class="deposit-header">
+                    <button class="btn-deposit" id="btnUseDeposit">
+                      <i class="fas fa-wallet"></i> Gunakan Deposit
+                    </button>
+                    <button class="btn-deposit-cancel" id="btnCancelDeposit" style="display: none;">
+                      <i class="fas fa-times"></i> Batal Deposit
+                    </button>
+                  </div>
+                  
+                  <!-- Deposit Search Section -->
+                  <div id="depositSearchSection" class="deposit-search-section" style="display: none;">
+                    <h4>Cari Pelanggan dengan Deposit</h4>
+                    <div class="search-box">
+                      <input type="text" id="searchDepositCustomer" placeholder="Cari nama pelanggan..." />
+                      <button class="btn-search" id="btnSearchDeposit">
+                        <i class="fas fa-search"></i>
+                      </button>
+                    </div>
+                    <div id="depositSearchResults" class="deposit-search-results"></div>
+                  </div>
+                  
+                  <!-- Deposit Info Display -->
+                  <div id="depositInfo" style="display: none;"></div>
+                </div>
+                
+                <div class="summary-row">
+                  <span>Bayar:</span>
+                  <input type="number" id="paymentAmount" placeholder="Masukkan jumlah bayar" />
+                </div>
+                <div class="summary-row">
+                  <span>Kembalian:</span>
+                  <span id="changeAmount" class="change-price">Rp 0</span>
+                </div>
+                
+                <div class="customer-info">
+                  <input type="text" id="customerName" placeholder="Nama Pembeli (opsional)" />
+                  <input type="text" id="customerAddress" placeholder="Alamat Pembeli (opsional)" />
+                  <textarea id="transactionNote" placeholder="Catatan transaksi (opsional)"></textarea>
+                </div>
+                
+                <button class="btn-checkout" id="btnCheckout">
+                  <i class="fas fa-check"></i>
+                  Selesaikan Transaksi
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="today-recap">
+            <h3>Rekap Transaksi Hari Ini - Toko 1 (BM1)</h3>
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Waktu</th>
+                    <th>Nama</th>
+                    <th>Barang & Qty</th>
+                    <th>Total</th>
+                    <th>Status</th>
+                    <th>Catatan</th>
+                    <th>Print</th>
+                  </tr>
+                </thead>
+                <tbody id="todayTransactionsTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="listbarang" class="page">
+          <div class="stok-header">
+            <h3>List Barang - Stok Toko 1 (BM1)</h3>
+            <div class="search-box search-box-listbarang">
+              <input type="text" id="searchBarangList" placeholder="Cari ID/Nama Barang..." />
+              <button class="btn-search" id="btnSearchList">
+                <i class="fas fa-search"></i>
+              </button>
+            </div>
+          </div>
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Tanggal</th>
+                  <th>Nama Barang</th>
+                  <th>Harga Jual (Kelompok)</th>
+                  <th>Harga Jual (Turunan)</th>
+                  <th>Stok Kelompok (BM1)</th>
+                  <th>Stok Turunan (BM1)</th>
+                  <th>Total Stok BM1</th>
+                  <th>Total Stok Gabungan</th>
+                </tr>
+              </thead>
+              <tbody id="listBarangTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="refund" class="page">
+          <div class="stok-header">
+            <h3>Pengembalian & Penukaran Barang - Toko 1 (BM1)</h3>
+          </div>
+
+          <div class="transaksi-container refund-container">
+            <div class="search-section">
+                <h4>1. Cari Transaksi</h4>
+                <div class="refund-search-controls">
+                    <input type="text" id="searchRefundName" placeholder="Cari Nama Pembeli..." class="refund-search-name">
+                    <input type="date" id="searchRefundDate" class="refund-search-date">
+                    <button class="btn-search" id="btnSearchRefund">
+                        <i class="fas fa-search"></i> Cari Transaksi
+                    </button>
+                </div>
+                <div class="table-container refund-transaction-list" id="refundTransactionListContainer">
+                    <table class="data-table" id="refundTransactionListTable">
+                        <thead>
+                            <tr>
+                                <th class="col-datetime">Tanggal & Waktu</th>
+                                <th class="col-name">Nama Pembeli</th>
+                                <th>Total</th>
+                                <th>Barang Dibeli</th>
+                                <th class="col-action">Aksi</th>
+                            </tr>
+                        </thead>
+                        <tbody id="refundTransactionTableBody">
+                            <tr><td colspan="5" class="text-center">Cari transaksi terlebih dahulu.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="cart-section refund-process-section" id="refundProcessSection" style="display: none;">
+                <h4>2. Proses Refund/Tukar</h4>
+                <div class="customer-info refund-info-box">
+                    <p><strong>Transaksi Awal:</strong> <span id="refundOriginalTransInfo"></span></p>
+                    <p><strong>Jenis:</strong> 
+                        <select id="refundTypeSelector">
+                            <option value="refund">Pengembalian Barang (Refund)</option>
+                            <option value="exchange">Penukaran Barang (Exchange)</option>
+                        </select>
+                    </p>
+                </div>
+                
+                <h5>Barang yang Di-Refund/Tukar</h5>
+                <div id="refundItems" class="cart-items refund-items-box"></div>
+
+                <div id="exchangeAddSection" style="display: none;">
+                    <h5>Tambah Barang (Untuk Penukaran)</h5>
+                    <div class="search-box">
+                      <input type="text" id="searchBarangRefund" placeholder="Cari Barang Tambahan..." />
+                      <button class="btn-search" id="btnSearchRefundAdd">
+                        <i class="fas fa-search"></i>
+                      </button>
+                    </div>
+                    <div id="searchResultsRefund" class="search-results search-results-refund"></div>
+                </div>
+
+                <div class="cart-summary">
+                    <div class="summary-row">
+                        <span>Total Nilai Barang Dikembalikan:</span>
+                        <span id="refundRefundTotal" class="total-price refund-total-danger">Rp 0</span>
+                    </div>
+                    <div class="summary-row exchange-total-row" id="exchangeTotalRow" style="display: none;">
+                        <span>Total Nilai Barang Baru:</span>
+                        <span id="refundExchangeTotal" class="total-price refund-total-primary">Rp 0</span>
+                    </div>
+                    <div class="summary-row" id="refundDiffRow">
+                        <span>Uang Kembali (Nilai Dikembalikan):</span>
+                        <span id="refundDifference" class="change-price">Rp 0</span>
+                    </div>
+                    <div class="customer-info">
+                        <textarea id="refundNote" placeholder="Catatan Refund/Tukar"></textarea>
+                    </div>
+                    <button class="btn-checkout btn-finish-refund" id="btnFinishRefund">
+                        <i class="fas fa-save"></i> Selesaikan Proses
+                    </button>
+                </div>
+            </div>
+          </div>
+        </section>
+
+      </main>
+    </div>
+
+    <!-- IMPORTANT: Set STORE_ID sebelum memuat karyawan.js -->
+    <!-- Update bagian script di karyawan1.html -->
+<script>
+  const STORE_ID = 'BM1';
+</script>
+<script src="global_api.js"></script>
+<script src="save_offline.js"></script>
+<script src="save_online.js"></script>
+<script src="save_global.js"></script>
+<script src="karyawan.js"></script>
+  </body>
+</html>
